@@ -132,6 +132,9 @@ impl Transformer for JsonTransformer {
         for field in &mut self.fields {
             field.rule.init(ctx)
         }
+        if let OnInvalid::ReplaceWith(ReplaceInvalid::Rule(t)) = &mut self.on_invalid {
+            t.init(ctx);
+        }
     }
 }
 
