@@ -168,8 +168,8 @@ mod test {
         "#;
         let json = json!(
             [
-                { "user": { "name": "Andrew", "age": 40, "comment": "Abc" } },
-                { "user": { "name": "Briana", "age": 30, "comment": "Def" } },
+                { "user": { "name": "Andrew", "age": 20, "comment": "Abc" } },
+                { "user": { "name": "Briana", "age": 20, "comment": "Def" } },
                 { "user": { "name": "Charlie", "age": 20, "comment": "Ghi" } }
             ]
         );
@@ -192,5 +192,50 @@ mod test {
         }
     }
 
-    mod on_invalid {}
+    mod on_invalid {
+        use super::*;
+
+        #[test]
+        fn as_is() {
+            let config = r#"
+                json:
+                  fields:
+                    - name: "user_name"
+                      selector: "$..user.name"
+                      quote: true
+                      rule:
+                        first_name: {}
+                  on_invalid: AsIs
+                "#;
+
+            let t: Transformers = serde_yaml::from_str(config).unwrap();
+            let new_json = t.transform("field", "invalid", &None)
+                    .unwrap()
+                    .unwrap();
+
+            assert_eq!(new_json, "invalid");
+        }
+
+        #[test]
+        fn replace_with_json() {
+            let config = r#"
+                json:
+                  fields:
+                    - name: "user_name"
+                      selector: "$..user.name"
+                      quote: true
+                      rule:
+                        first_name: {}
+                  on_invalid:
+                    ReplaceWith: '{"invalid": true}'
+                "#;
+
+            let t: Transformers = serde_yaml::from_str(config).unwrap();
+            let new_json = t.transform("field", "invalid", &None)
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(new_json, "{\"invalid\": true}");
+        }
+    }
 }
