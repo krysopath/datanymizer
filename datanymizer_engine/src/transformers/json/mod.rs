@@ -2,6 +2,7 @@ use crate::{
     transformer::TransformResultHelper, TransformContext, TransformResult, Transformer,
     TransformerInitContext, Transformers,
 };
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -9,45 +10,63 @@ mod selector;
 use selector::Selector;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
-#[serde(untagged)]
-enum ReplaceInvalid {
-    Rule(Box<Transformers>),
-    Json(String),
-}
-
-impl Default for ReplaceInvalid {
-    fn default() -> Self {
-        Self::Json("{}".to_string())
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
-enum OnInvalid {
-    AsIs,
-    ReplaceWith(ReplaceInvalid),
-    Error,
-}
-
-impl Default for OnInvalid {
-    fn default() -> Self {
-        Self::ReplaceWith(ReplaceInvalid::default())
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
-struct Field {
-    name: String,
-    selector: Selector,
-    rule: Transformers,
-    #[serde(default)]
-    quote: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct JsonTransformer {
     fields: Vec<Field>,
     #[serde(default)]
     on_invalid: OnInvalid,
+}
+
+impl JsonTransformer {
+    fn transform_parsed_value(
+        &self,
+        field_name: &str,
+        mut value: Value,
+        ctx: &Option<TransformContext>,
+    ) -> Result<String> {
+        let mut err: Option<anyhow::Error> = None;
+        for field in &self.fields {
+            let replace_result = field.selector.replace(value, &mut |v| {
+                let transform_result =
+                    field
+                        .rule
+                        .transform(field_name, v.to_string().as_str(), ctx);
+                match transform_result {
+                    Ok(r) => match r {
+                        Some(v) => {
+                            if field.quote {
+                                return Some(Value::from(v));
+                            }
+                            let tr_json = serde_json::from_str(v.as_str());
+                            match tr_json {
+                                Ok(json) => Some(json),
+                                Err(e) => {
+                                    err = Some(e.into());
+                                    None
+                                }
+                            }
+                        }
+                        None => None,
+                    },
+                    Err(e) => {
+                        err = Some(e.into());
+                        None
+                    }
+                }
+            });
+
+            if let Some(e) = err {
+                return Err(e);
+            }
+
+            match replace_result {
+                Ok(v) => value = v,
+                Err(e) => {
+                    return Err(e.into());
+                }
+            }
+        }
+        Ok(value.to_string())
+    }
 }
 
 impl Transformer for JsonTransformer {
@@ -58,60 +77,10 @@ impl Transformer for JsonTransformer {
         ctx: &Option<TransformContext>,
     ) -> TransformResult {
         match serde_json::from_str(field_value) {
-            Ok(parsed_value) => {
-                let mut value = parsed_value;
-                let mut err = None;
-                for field in &self.fields {
-                    let replace_result = field.selector.replace(value, &mut |v| {
-                        let transform_result =
-                            field
-                                .rule
-                                .transform(field_name, v.to_string().as_str(), ctx);
-                        match transform_result {
-                            Ok(r) => match r {
-                                Some(v) => {
-                                    if field.quote {
-                                        return Some(Value::from(v));
-                                    }
-                                    let tr_json = serde_json::from_str(v.as_str());
-                                    match tr_json {
-                                        Ok(json) => Some(json),
-                                        Err(e) => {
-                                            err = Some(TransformResult::error(
-                                                field_name,
-                                                field_value,
-                                                e.to_string().as_str(),
-                                            ));
-                                            None
-                                        }
-                                    }
-                                }
-                                None => None,
-                            },
-                            Err(e) => {
-                                err = Some(Err(e));
-                                None
-                            }
-                        }
-                    });
-
-                    if let Some(e) = err {
-                        return e;
-                    }
-
-                    match replace_result {
-                        Ok(v) => value = v,
-                        Err(e) => {
-                            return TransformResult::error(
-                                field_name,
-                                field_value,
-                                e.to_string().as_str(),
-                            );
-                        }
-                    }
-                }
-                TransformResult::present(value.to_string())
-            }
+            Ok(parsed_value) => match self.transform_parsed_value(field_name, parsed_value, ctx) {
+                Ok(v) => TransformResult::present(v),
+                Err(e) => TransformResult::error(field_name, field_value, e.to_string().as_str()),
+            },
             Err(e) => {
                 // invalid JSON from DB
                 match &self.on_invalid {
@@ -135,6 +104,41 @@ impl Transformer for JsonTransformer {
         if let OnInvalid::ReplaceWith(ReplaceInvalid::Rule(t)) = &mut self.on_invalid {
             t.init(ctx);
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+struct Field {
+    name: String,
+    selector: Selector,
+    rule: Transformers,
+    #[serde(default)]
+    quote: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+enum OnInvalid {
+    AsIs,
+    ReplaceWith(ReplaceInvalid),
+    Error,
+}
+
+impl Default for OnInvalid {
+    fn default() -> Self {
+        Self::ReplaceWith(ReplaceInvalid::default())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+#[serde(untagged)]
+enum ReplaceInvalid {
+    Rule(Box<Transformers>),
+    Json(String),
+}
+
+impl Default for ReplaceInvalid {
+    fn default() -> Self {
+        Self::Json("{}".to_string())
     }
 }
 
