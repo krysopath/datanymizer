@@ -209,9 +209,7 @@ mod test {
                 "#;
 
             let t: Transformers = serde_yaml::from_str(config).unwrap();
-            let new_json = t.transform("field", "invalid", &None)
-                    .unwrap()
-                    .unwrap();
+            let new_json = t.transform("field", "invalid", &None).unwrap().unwrap();
 
             assert_eq!(new_json, "invalid");
         }
@@ -231,9 +229,7 @@ mod test {
                 "#;
 
             let t: Transformers = serde_yaml::from_str(config).unwrap();
-            let new_json = t.transform("field", "invalid", &None)
-                .unwrap()
-                .unwrap();
+            let new_json = t.transform("field", "invalid", &None).unwrap().unwrap();
 
             assert_eq!(new_json, "{\"invalid\": true}");
         }
