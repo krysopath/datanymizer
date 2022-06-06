@@ -89,7 +89,7 @@ impl Transformer for JsonTransformer {
                         TransformResult::error(field_name, field_value, e.to_string().as_str())
                     }
                     OnInvalid::ReplaceWith(replacement) => match replacement {
-                        ReplaceInvalid::Json(str) => TransformResult::present(str.clone()),
+                        ReplaceInvalid::Plain(str) => TransformResult::present(str.clone()),
                         ReplaceInvalid::Rule(t) => t.transform(field_name, field_value, ctx),
                     },
                 }
@@ -117,6 +117,7 @@ struct Field {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+#[serde(rename_all = "snake_case")]
 enum OnInvalid {
     AsIs,
     ReplaceWith(ReplaceInvalid),
@@ -133,12 +134,12 @@ impl Default for OnInvalid {
 #[serde(untagged)]
 enum ReplaceInvalid {
     Rule(Box<Transformers>),
-    Json(String),
+    Plain(String),
 }
 
 impl Default for ReplaceInvalid {
     fn default() -> Self {
-        Self::Json("{}".to_string())
+        Self::Plain("{}".to_string())
     }
 }
 
@@ -196,6 +197,24 @@ mod test {
         use super::*;
 
         #[test]
+        fn default() {
+            let config = r#"
+                json:
+                  fields:
+                    - name: "user_name"
+                      selector: "$..user.name"
+                      quote: true
+                      rule:
+                        first_name: {}
+                "#;
+
+            let t: Transformers = serde_yaml::from_str(config).unwrap();
+            let new_json = t.transform("field", "invalid", &None).unwrap().unwrap();
+
+            assert_eq!(new_json, "{}");
+        }
+
+        #[test]
         fn as_is() {
             let config = r#"
                 json:
@@ -205,7 +224,7 @@ mod test {
                       quote: true
                       rule:
                         first_name: {}
-                  on_invalid: AsIs
+                  on_invalid: as_is
                 "#;
 
             let t: Transformers = serde_yaml::from_str(config).unwrap();
@@ -215,7 +234,7 @@ mod test {
         }
 
         #[test]
-        fn replace_with_json() {
+        fn replace_with_plain() {
             let config = r#"
                 json:
                   fields:
@@ -225,13 +244,36 @@ mod test {
                       rule:
                         first_name: {}
                   on_invalid:
-                    ReplaceWith: '{"invalid": true}'
+                    replace_with: '{"plain": true}'
                 "#;
 
             let t: Transformers = serde_yaml::from_str(config).unwrap();
             let new_json = t.transform("field", "invalid", &None).unwrap().unwrap();
 
-            assert_eq!(new_json, "{\"invalid\": true}");
+            assert_eq!(new_json, "{\"plain\": true}");
+        }
+
+        #[test]
+        fn replace_with_rule() {
+            let config = r#"
+                json:
+                  fields:
+                    - name: "user_name"
+                      selector: "$..user.name"
+                      quote: true
+                      rule:
+                        first_name: {}
+                  on_invalid:
+                    replace_with:
+                      template:
+                        format: '{"rule": true}'
+                "#;
+
+            let mut t: Transformers = serde_yaml::from_str(config).unwrap();
+            t.init(&TransformerInitContext::default());
+            let new_json = t.transform("field", "invalid", &None).unwrap().unwrap();
+
+            assert_eq!(new_json, "{\"rule\": true}");
         }
     }
 }
